@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Ledger — task density tracker</title>
+<style>
+  :root{
+    --bg: #0b0d0c;
+    --panel: #141715;
+    --panel-2: #191d1a;
+    --line: #262b27;
+    --ink: #eef1ee;
+    --ink-dim: #8d968f;
+    --ink-faint: #565d59;
+    --accent: #ffb238;
+    --accent-dim: #7a5a1c;
+    --empty: #1d211e;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --serif: "Fraunces", Georgia, serif;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    min-height: 100vh;
+    padding: 28px 20px 80px;
+  }
+
+  @media (min-width: 700px){
+    body{ padding: 48px 40px 100px; }
+  }
+
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+  }
+
+  /* ---------- Header ---------- */
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .brand .mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .year-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(36px, 8vw, 56px);
+    margin: 0;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .year-nav button {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .year-nav button:hover { border-color: var(--ink-dim); color: var(--ink); }
+
+  .stat-block {
+    text-align: right;
+    font-family: var(--mono);
+  }
+  .stat-block .num {
+    font-size: 28px;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .stat-block .label {
+    font-size: 11px;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 4px;
+  }
+
+  .subline {
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin: 4px 0 28px;
+    font-family: var(--mono);
+  }
+
+  /* ---------- Panel ---------- */
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 26px 22px 22px;
+    margin-bottom: 20px;
+  }
+
+  /* ---------- Grid ---------- */
+
+  .grid-scroll {
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  }
+  .grid-scroll.at-end {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  .grid-inner {
+    min-width: 640px;
+  }
+
+  .scroll-hint {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  .scroll-hint.show { display: flex; }
+
+  .month-labels {
+    display: grid;
+    grid-template-columns: 34px repeat(53, 1fr);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-bottom: 6px;
+  }
+
+  .month-labels span { grid-row: 1; }
+
+  .grid-body {
+    display: flex;
+    gap: 10px;
+  }
+
+  .day-labels {
+    display: grid;
+    grid-template-rows: repeat(7, 1fr);
+    gap: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-dim);
+    padding-top: 1px;
+    width: 30px;
+    flex-shrink: 0;
+  }
+  .day-labels span { display: flex; align-items: center; height: 13px; line-height: 1; }
+
+  .weeks {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(7, 1fr);
+    gap: 3px;
+  }
+
+  .cell {
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    background: var(--empty);
+    cursor: pointer;
+    transition: transform 0.08s ease, outline 0.08s ease;
+    position: relative;
+  }
+  .cell:hover {
+    transform: scale(1.35);
+    z-index: 5;
+    outline: 1.5px solid var(--ink);
+  }
+  .cell.future { cursor: default; opacity: 0.35; }
+  .cell.future:hover { transform: none; outline: none; }
+  .cell.today { outline: 1.5px solid var(--accent); }
+
+  /* ---------- Legend ---------- */
+
+  .legend {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+
+  .legend-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .legend-scale {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .legend-label {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-dim);
+  }
+  .legend-scale .cell { cursor: default; }
+  .legend-scale .cell:hover { transform: none; outline: none; }
+  .legend-scale .ends {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+
+  /* ---------- Day detail panel ---------- */
+
+  .detail {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px;
+  }
+
+  .detail-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail-date {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 600;
+  }
+
+  .detail-count {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  .detail-sub {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-bottom: 18px;
+  }
+
+  .task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  .task-row:last-child { border-bottom: none; }
+
+  .task-check {
+    width: 19px;
+    height: 19px;
+    border-radius: 4px;
+    border: 1.5px solid var(--ink-faint);
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .task-check.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .task-check svg { display: none; width: 12px; height: 12px; }
+  .task-check.checked svg { display: block; }
+
+  .task-name {
+    flex: 1;
+    font-size: 14.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .task-row.done .task-name { color: var(--ink-dim); }
+
+  .task-del {
+    background: none;
+    border: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    line-height: 1;
+    opacity: 0.5;
+  }
+  .task-del:hover { opacity: 1; color: #d9534f; }
+
+  .empty-msg {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink-faint);
+    padding: 20px 4px;
+    text-align: center;
+  }
+
+  /* ---------- Task manager panel ---------- */
+
+  .manager-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .manager-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  input[type="text"] {
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    font-family: var(--sans);
+    font-size: 14.5px;
+    outline: none;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--ink-faint); }
+
+  .btn {
+    background: var(--accent);
+    color: #1a1300;
+    border: none;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:active { transform: scale(0.97); }
+
+  .btn-ghost {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .btn-ghost:hover { border-color: var(--ink-dim); color: var(--ink); }
+
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  /* ---------- Tooltip ---------- */
+
+  #tooltip {
+    position: fixed;
+    background: #1f2321;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 11px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    pointer-events: none;
+    z-index: 100;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-width: 220px;
+  }
+  #tooltip .t-date { color: var(--ink-dim); margin-bottom: 3px; }
+  #tooltip .t-count { color: var(--accent); }
+
+  /* ---------- Footer / data controls ---------- */
+
+  footer {
+    margin-top: 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .data-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .fine-print {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    max-width: 420px;
+    line-height: 1.5;
+  }
+
+  .save-flash {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .save-flash.show { opacity: 1; }
+
+  #fileInput { display: none; }
+
+  /* ---------- Drive status ---------- */
+
+  .drive-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .drive-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+    flex-shrink: 0;
+  }
+  .drive-dot.connected { background: #3fae5c; }
+  .drive-dot.syncing { background: var(--accent); }
+  .drive-dot.error { background: #c94a3f; }
+
+  @media (max-width: 640px){
+    .panel { padding: 18px 12px 16px; }
+    .legend { flex-direction: column; align-items: flex-start; }
+    footer { flex-direction: column; align-items: flex-start; }
+    .stat-block { text-align: left; }
+    header { flex-direction: column; }
+    .grid-inner{ min-width: 900px; }
+    .cell { width: 16px; height: 16px; border-radius: 4px; }
+    .weeks { gap: 4px; }
+    .day-labels span { height: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <span class="mark">TASK LEDGER</span>
+      <div class="year-row">
+        <h1 id="yearHeading">2026</h1>
+        <div class="year-nav">
+          <button id="prevYear" aria-label="Previous year">‹</button>
+          <button id="nextYear" aria-label="Next year">›</button>
+        </div>
+      </div>
+    </div>
+    <div class="stat-block">
+      <div class="num" id="activeDaysStat">0</div>
+      <div class="label" id="activeDaysLabel">active days</div>
+    </div>
+  </header>
+
+  <div class="subline" id="subline">Every square is a day. Brighter square, more of your list got done.</div>
+
+  <div class="panel">
+    <div class="scroll-hint" id="scrollHint">
+      <span>→ scroll for the rest of the year</span>
+    </div>
+    <div class="grid-scroll" id="gridScroll">
+      <div class="grid-inner">
+        <div class="month-labels" id="monthLabels"></div>
+        <div class="grid-body">
+          <div class="day-labels">
+            <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span>
+          </div>
+          <div class="weeks" id="weeksGrid"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-title">Status</div>
+      <div class="legend-scale" id="legendScale">
+        <div class="legend-item">
+          <div class="cell" id="legend0"></div>
+          <span class="legend-label">None done</span>
+        </div>
+        <div class="legend-item">
+          <div class="cell" id="legend1"></div>
+          <span class="legend-label">Behind</span>
+        </div>
+        <div class="legend-item">
+          <div class="cell" id="legend2"></div>
+          <span class="legend-label">Almost there</span>
+        </div>
+        <div class="legend-item">
+          <div class="cell" id="legend3"></div>
+          <span class="legend-label">All done</span>
+        </div>
+        <span class="ends" id="legendMaxLabel">out of <span id="legendMax">5</span> tasks</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="detail" id="detailPanel">
+    <div class="detail-head">
+      <div class="detail-date" id="detailDate">Select a day</div>
+      <div class="detail-count" id="detailCount"></div>
+    </div>
+    <div class="detail-sub" id="detailSub">Click any square above to check off tasks for that day.</div>
+    <div class="task-list" id="taskList"></div>
+  </div>
+
+  <div class="panel" style="margin-top: 20px;">
+    <div class="manager-head">
+      <span class="manager-title">Your task list</span>
+      <span class="manager-title" id="taskCountLabel">0 tasks</span>
+    </div>
+    <div class="task-list" id="masterTaskList"></div>
+    <div class="add-row">
+      <input type="text" id="newTaskInput" placeholder="Add a task, e.g. Read 20 pages" maxlength="60">
+      <button class="btn" id="addTaskBtn">Add</button>
+    </div>
+  </div>
+
+  <footer>
+    <div class="fine-print">
+      Saved automatically to this browser's storage — works offline, no account needed. Connect Google Drive to back up and sync across devices, or use <strong>Export</strong> / <strong>Import</strong> for manual backups.
+    </div>
+    <div class="data-actions">
+      <span class="save-flash" id="saveFlash">saved</span>
+      <div class="drive-status" id="driveStatus">
+        <span class="drive-dot" id="driveDot"></span>
+        <span id="driveStatusText">Drive not connected</span>
+      </div>
+      <button class="btn btn-ghost" id="driveBtn">Connect Google Drive</button>
+      <button class="btn btn-ghost" id="exportBtn">Export</button>
+      <button class="btn btn-ghost" id="importBtn">Import</button>
+      <input type="file" id="fileInput" accept="application/json">
+    </div>
+  </footer>
+
+</div>
+
+<div id="tooltip"></div>
+
+<!-- Google Identity Services (OAuth token client) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- State ---------------- */
+
+  const STORAGE_KEY = "taskLedgerData_v1";
+  const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  function todayISO(){
+    const d = new Date();
+    return isoFromDate(d);
+  }
+  function isoFromDate(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,"0");
+    const day = String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${day}`;
+  }
+
+  function defaultState(){
+    return {
+      tasks: [
+        { id: uid(), name: "Workout" },
+        { id: uid(), name: "Read" },
+        { id: uid(), name: "Deep work block" },
+        { id: uid(), name: "No junk food" },
+        { id: uid(), name: "Sleep by midnight" }
+      ],
+      days: {}, // "YYYY-MM-DD": { done: [taskId, ...] }
+      currentYear: new Date().getFullYear()
+    };
+  }
+
+  function uid(){
+    return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  }
+
+  function loadState(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(!raw) return defaultState();
+      const parsed = JSON.parse(raw);
+      if(!parsed.tasks || !parsed.days) return defaultState();
+      if(!parsed.currentYear) parsed.currentYear = new Date().getFullYear();
+      return parsed;
+    }catch(e){
+      console.error("Load failed, starting fresh.", e);
+      return defaultState();
+    }
+  }
+
+  let state = loadState();
+  let selectedDate = todayISO();
+  let saveTimer = null;
+
+  function saveState(){
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      flashSaved();
+      queueDriveSync();
+    }catch(e){
+      console.error("Save failed", e);
+    }
+  }
+
+  function flashSaved(){
+    const el = document.getElementById("saveFlash");
+    el.classList.add("show");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=> el.classList.remove("show"), 900);
+  }
+
+  /* ---------------- Color scale ---------------- */
+
+  // Kept the internal band names (red/amber/green) so bandForCounts logic
+  // below didn't need touching — only the actual colors shown changed:
+  //   red   ("behind")      -> yellow
+  //   amber ("almost there")-> light green
+  //   green ("all done")    -> dark green
+  const BAND_COLOR = {
+    empty: "var(--empty)",
+    red:   "#e0c02e",
+    amber: "#7ed957",
+    green: "#1e7d34"
+  };
+
+  function bandForCounts(done, total){
+    if(total <= 0 || done <= 0) return "empty";
+    if(done >= total) return "green";
+    const remaining = total - done;
+    if(remaining <= 2) return "amber";
+    if(done * 2 >= total) return "amber";
+    return "red";
+  }
+
+  function colorForCounts(done, total){
+    return BAND_COLOR[bandForCounts(done, total)];
+  }
+
+  function setLegendSwatches(){
+    const total = Math.max(1, state.tasks.length);
+    document.getElementById("legendMax").textContent = total;
+    const sampleDone = [
+      0,
+      Math.max(1, Math.ceil(total * 0.25)),
+      Math.max(1, Math.min(total - 1, total - 1)),
+      total
+    ];
+    const ids = ["legend0", "legend1", "legend2", "legend3"];
+    ids.forEach((id, i)=>{
+      document.getElementById(id).style.background = colorForCounts(sampleDone[i], total);
+    });
+  }
+
+  /* ---------------- Grid rendering ---------------- */
+
+  function getDoneCount(dateStr){
+    const rec = state.days[dateStr];
+    if(!rec || !rec.done) return 0;
+    const validIds = new Set(state.tasks.map(t=>t.id));
+    return rec.done.filter(id => validIds.has(id)).length;
+  }
+
+  function buildYearCells(year){
+    const jan1 = new Date(year, 0, 1);
+    const dec31 = new Date(year, 11, 31);
+
+    const startOffset = (jan1.getDay() + 6) % 7;
+    const gridStart = new Date(jan1);
+    gridStart.setDate(jan1.getDate() - startOffset);
+
+    const gridEnd = new Date(dec31);
+    gridEnd.setDate(dec31.getDate() + (6 - ((dec31.getDay()+6)%7)));
+
+    const weeks = [];
+    let cur = new Date(gridStart);
+    while(cur <= gridEnd){
+      const week = [];
+      for(let i=0;i<7;i++){
+        week.push(new Date(cur));
+        cur.setDate(cur.getDate()+1);
+      }
+      weeks.push(week);
+    }
+    return weeks;
+  }
+
+  function renderGrid(){
+    const year = state.currentYear;
+    document.getElementById("yearHeading").textContent = year;
+
+    const weeks = buildYearCells(year);
+    const weeksGrid = document.getElementById("weeksGrid");
+    weeksGrid.innerHTML = "";
+    weeksGrid.style.gridTemplateColumns = `repeat(${weeks.length}, 13px)`;
+
+    const total = Math.max(1, state.tasks.length);
+    const today = todayISO();
+    let activeDays = 0;
+
+    weeks.forEach(week=>{
+      week.forEach(dateObj=>{
+        const inYear = dateObj.getFullYear() === year;
+        const iso = isoFromDate(dateObj);
+        const isFuture = iso > today;
+
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        if(!inYear){
+          cell.style.visibility = "hidden";
+        } else {
+          const done = getDoneCount(iso);
+          cell.style.background = colorForCounts(done, total);
+          if(done > 0){ activeDays++; }
+          if(isFuture) cell.classList.add("future");
+          if(iso === today) cell.classList.add("today");
+          if(iso === selectedDate) cell.style.outline = "1.5px solid #fff";
+
+          cell.dataset.date = iso;
+          cell.addEventListener("mouseenter", (e)=> showTooltip(e, iso, done, total));
+          cell.addEventListener("mousemove", positionTooltip);
+          cell.addEventListener("mouseleave", hideTooltip);
+
+          if(!isFuture){
+            cell.addEventListener("click", ()=>{
+              selectedDate = iso;
+              renderGrid();
+              renderDetail();
+            });
+          }
+        }
+        weeksGrid.appendChild(cell);
+      });
+    });
+
+    document.getElementById("activeDaysStat").textContent = activeDays;
+    document.getElementById("activeDaysLabel").textContent = activeDays === 1 ? "active day" : "active days";
+
+    renderMonthLabels(weeks);
+    setLegendSwatches();
+    setupScrollHint();
+  }
+
+  function setupScrollHint(){
+    const scroller = document.getElementById("gridScroll");
+    const hint = document.getElementById("scrollHint");
+    const hasOverflow = scroller.scrollWidth > scroller.clientWidth + 4;
+    hint.classList.toggle("show", hasOverflow);
+
+    function updateFade(){
+      const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4;
+      scroller.classList.toggle("at-end", atEnd || !hasOverflow);
+      if(atEnd) hint.classList.remove("show");
+      else if(hasOverflow) hint.classList.add("show");
+    }
+    scroller.removeEventListener("scroll", scroller._fadeHandler || (()=>{}));
+    scroller._fadeHandler = updateFade;
+    scroller.addEventListener("scroll", updateFade);
+    updateFade();
+
+    if(hasOverflow){
+      const todayCell = scroller.querySelector(`.cell.today`);
+      if(todayCell){
+        const cellLeft = todayCell.offsetLeft;
+        scroller.scrollLeft = Math.max(0, cellLeft - scroller.clientWidth * 0.6);
+        updateFade();
+      }
+    }
+  }
+
+  function renderMonthLabels(weeks){
+    const container = document.getElementById("monthLabels");
+    container.innerHTML = "";
+    container.style.gridTemplateColumns = `34px repeat(${weeks.length}, 13px)`;
+
+    const spacer = document.createElement("span");
+    container.appendChild(spacer);
+
+    let lastMonth = -1;
+    weeks.forEach((week, wIdx)=>{
+      const firstOfMonth = week.find(d => d.getDate() <= 7 && d.getFullYear() === state.currentYear);
+      const label = document.createElement("span");
+      label.style.gridColumn = wIdx + 2;
+      if(firstOfMonth && firstOfMonth.getMonth() !== lastMonth){
+        label.textContent = MONTH_LABELS[firstOfMonth.getMonth()];
+        lastMonth = firstOfMonth.getMonth();
+      }
+      container.appendChild(label);
+    });
+  }
+
+  /* ---------------- Tooltip ---------------- */
+
+  function showTooltip(e, iso, done, total){
+    const tip = document.getElementById("tooltip");
+    const d = new Date(iso + "T00:00:00");
+    const dateStr = d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
+    tip.innerHTML = `<div class="t-date">${dateStr}</div><div class="t-count">${done} / ${total} tasks</div>`;
+    tip.style.display = "block";
+    positionTooltip(e);
+  }
+  function positionTooltip(e){
+    const tip = document.getElementById("tooltip");
+    const x = e.clientX + 14;
+    const y = e.clientY + 14;
+    tip.style.left = Math.min(x, window.innerWidth - 200) + "px";
+    tip.style.top = y + "px";
+  }
+  function hideTooltip(){
+    document.getElementById("tooltip").style.display = "none";
+  }
+
+  /* ---------------- Detail panel (per-day checklist) ---------------- */
+
+  function renderDetail(){
+    const d = new Date(selectedDate + "T00:00:00");
+    const dateStr = d.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    document.getElementById("detailDate").textContent = dateStr;
+
+    const total = state.tasks.length;
+    const done = getDoneCount(selectedDate);
+    document.getElementById("detailCount").textContent = total ? `${done} / ${total} done` : "";
+    document.getElementById("detailSub").textContent = total
+      ? "Tap a task to mark it done for this day."
+      : "Add tasks below first, then check them off per day.";
+
+    const list = document.getElementById("taskList");
+    list.innerHTML = "";
+
+    if(state.tasks.length === 0){
+      const msg = document.createElement("div");
+      msg.className = "empty-msg";
+      msg.textContent = "No tasks yet — add some in \u201cYour task list\u201d below.";
+      list.appendChild(msg);
+      return;
+    }
+
+    const rec = state.days[selectedDate];
+    const doneSet = new Set(rec && rec.done ? rec.done : []);
+
+    state.tasks.forEach(task=>{
+      const row = document.createElement("div");
+      row.className = "task-row" + (doneSet.has(task.id) ? " done" : "");
+
+      const check = document.createElement("button");
+      check.className = "task-check" + (doneSet.has(task.id) ? " checked" : "");
+      check.innerHTML = `<svg viewBox="0 0 12 12" fill="none"><path d="M2 6.2L4.7 9L10 3" stroke="#1a1300" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      check.setAttribute("aria-label", "Toggle " + task.name);
+
+      const name = document.createElement("span");
+      name.className = "task-name";
+      name.textContent = task.name;
+
+      function toggle(){
+        toggleTaskForDay(selectedDate, task.id);
+        renderDetail();
+        renderGrid();
+      }
+      check.addEventListener("click", toggle);
+      name.addEventListener("click", toggle);
+
+      row.appendChild(check);
+      row.appendChild(name);
+      list.appendChild(row);
+    });
+  }
+
+  function toggleTaskForDay(dateStr, taskId){
+    if(!state.days[dateStr]) state.days[dateStr] = { done: [] };
+    const rec = state.days[dateStr];
+    const idx = rec.done.indexOf(taskId);
+    if(idx === -1){
+      rec.done.push(taskId);
+    } else {
+      rec.done.splice(idx, 1);
+    }
+    if(rec.done.length === 0) delete state.days[dateStr];
+    saveState();
+  }
+
+  /* ---------------- Master task list (manage tasks) ---------------- */
+
+  function renderMasterList(){
+    const list = document.getElementById("masterTaskList");
+    list.innerHTML = "";
+    document.getElementById("taskCountLabel").textContent =
+      `${state.tasks.length} task${state.tasks.length === 1 ? "" : "s"}`;
+
+    if(state.tasks.length === 0){
+      const msg = document.createElement("div");
+      msg.className = "empty-msg";
+      msg.textContent = "Your list is empty. Add your first task below.";
+      list.appendChild(msg);
+      return;
+    }
+
+    state.tasks.forEach(task=>{
+      const row = document.createElement("div");
+      row.className = "task-row";
+
+      const name = document.createElement("span");
+      name.className = "task-name";
+      name.textContent = task.name;
+      name.style.cursor = "default";
+
+      const del = document.createElement("button");
+      del.className = "task-del";
+      del.textContent = "✕";
+      del.title = "Remove task";
+      del.addEventListener("click", ()=>{
+        if(confirm(`Remove "${task.name}" from your task list? Past completions of it will no longer count.`)){
+          state.tasks = state.tasks.filter(t => t.id !== task.id);
+          saveState();
+          renderMasterList();
+          renderDetail();
+          renderGrid();
+        }
+      });
+
+      row.appendChild(name);
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
+  function addTask(){
+    const input = document.getElementById("newTaskInput");
+    const val = input.value.trim();
+    if(!val) return;
+    state.tasks.push({ id: uid(), name: val });
+    input.value = "";
+    saveState();
+    renderMasterList();
+    renderDetail();
+    renderGrid();
+    input.focus();
+  }
+
+  document.getElementById("addTaskBtn").addEventListener("click", addTask);
+  document.getElementById("newTaskInput").addEventListener("keydown", (e)=>{
+    if(e.key === "Enter") addTask();
+  });
+
+  /* ---------------- Year navigation ---------------- */
+
+  document.getElementById("prevYear").addEventListener("click", ()=>{
+    state.currentYear -= 1;
+    saveState();
+    renderGrid();
+  });
+  document.getElementById("nextYear").addEventListener("click", ()=>{
+    state.currentYear += 1;
+    saveState();
+    renderGrid();
+  });
+
+  /* ---------------- Export / Import ---------------- */
+
+  document.getElementById("exportBtn").addEventListener("click", ()=>{
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `task-ledger-backup-${todayISO()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("importBtn").addEventListener("click", ()=>{
+    document.getElementById("fileInput").click();
+  });
+
+  document.getElementById("fileInput").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt)=>{
+      try{
+        const parsed = JSON.parse(evt.target.result);
+        if(!parsed.tasks || !parsed.days){
+          alert("That file doesn't look like a Task Ledger export.");
+          return;
+        }
+        if(confirm("Import will replace everything currently in this browser with the file's data. Continue?")){
+          state = parsed;
+          if(!state.currentYear) state.currentYear = new Date().getFullYear();
+          saveState();
+          renderMasterList();
+          renderDetail();
+          renderGrid();
+        }
+      }catch(err){
+        alert("Couldn't read that file. Make sure it's a Task Ledger export (.json).");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  /* ================================================================
+     Google Drive integration
+     Uses Google Identity Services (token client) for OAuth, and the
+     Drive REST API directly (no gapi client library needed) with the
+     narrow "drive.file" scope — this app can only see/write files
+     it creates itself, never your whole Drive.
+     ================================================================ */
+
+  const GOOGLE_CLIENT_ID = "332351185880-anenmqr01ls0j40rfna7qiru4gaf1g0b.apps.googleusercontent.com";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const DRIVE_FILE_NAME = "task-ledger-data.json";
+  const DRIVE_TOKEN_KEY = "taskLedgerDriveToken_v1";
+  const DRIVE_FILEID_KEY = "taskLedgerDriveFileId_v1";
+
+  let tokenClient = null;
+  let accessToken = null;
+  let tokenExpiresAt = 0;
+  let driveFileId = localStorage.getItem(DRIVE_FILEID_KEY) || null;
+  let driveSyncTimer = null;
+  let driveBusy = false;
+
+  const driveBtn = document.getElementById("driveBtn");
+  const driveDot = document.getElementById("driveDot");
+  const driveStatusText = document.getElementById("driveStatusText");
+
+  function setDriveStatus(mode, text){
+    driveDot.className = "drive-dot" + (mode ? " " + mode : "");
+    driveStatusText.textContent = text;
+  }
+
+  function restoreToken(){
+    try{
+      const raw = sessionStorage.getItem(DRIVE_TOKEN_KEY);
+      if(!raw) return;
+      const parsed = JSON.parse(raw);
+      if(parsed.expiresAt > Date.now()){
+        accessToken = parsed.accessToken;
+        tokenExpiresAt = parsed.expiresAt;
+      }
+    }catch(e){ /* ignore */ }
+  }
+
+  function persistToken(){
+    try{
+      sessionStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
+        accessToken, expiresAt: tokenExpiresAt
+      }));
+    }catch(e){ /* ignore */ }
+  }
+
+  function isConnected(){
+    return !!accessToken && Date.now() < tokenExpiresAt;
+  }
+
+  function updateDriveUI(){
+    if(isConnected()){
+      driveBtn.textContent = "Disconnect Drive";
+      setDriveStatus("connected", driveFileId ? "Synced to Drive" : "Connected");
+    } else {
+      driveBtn.textContent = "Connect Google Drive";
+      setDriveStatus("", "Drive not connected");
+    }
+  }
+
+  function initGoogle(){
+    if(typeof google === "undefined" || !google.accounts || !google.accounts.oauth2){
+      // GIS script not loaded yet — retry briefly
+      setTimeout(initGoogle, 300);
+      return;
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (resp)=>{
+        driveBtn.disabled = false;
+        if(resp && resp.access_token){
+          accessToken = resp.access_token;
+          tokenExpiresAt = Date.now() + (Number(resp.expires_in || 3599) * 1000);
+          persistToken();
+          updateDriveUI();
+          syncWithDrive({ isInitialConnect: true });
+        } else {
+          setDriveStatus("error", "Connection failed");
+        }
+      },
+      error_callback: (err)=>{
+        driveBtn.disabled = false;
+        console.error("Google auth error:", err);
+        setDriveStatus("error", "Connection cancelled or failed");
+      }
+    });
+    restoreToken();
+    updateDriveUI();
+    if(isConnected()){
+      // We have a live token from earlier this session — pull latest on load
+      syncWithDrive({ isInitialConnect: false, pullOnly: true });
+    }
+  }
+
+  driveBtn.addEventListener("click", ()=>{
+    if(isConnected()){
+      // Disconnect
+      if(confirm("Disconnect Google Drive? Your data stays saved locally in this browser either way.")){
+        if(accessToken && google.accounts && google.accounts.oauth2){
+          google.accounts.oauth2.revoke(accessToken, ()=>{});
+        }
+        accessToken = null;
+        tokenExpiresAt = 0;
+        sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+        updateDriveUI();
+      }
+      return;
+    }
+    if(!tokenClient){
+      setDriveStatus("error", "Google sign-in still loading — try again in a moment");
+      return;
+    }
+    driveBtn.disabled = true;
+    setDriveStatus("syncing", "Opening Google sign-in…");
+    // First-ever connection needs prompt:"consent" so Google actually shows
+    // the sign-in/approval screen. prompt:"" only works once a session from
+    // a previous approval already exists — that's why the button did nothing
+    // before this fix, since there was never a prior session to reuse silently.
+    tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+  });
+
+  async function driveApiFetch(url, options){
+    options = options || {};
+    options.headers = Object.assign({}, options.headers, {
+      "Authorization": "Bearer " + accessToken
+    });
+    const res = await fetch(url, options);
+    if(res.status === 401){
+      throw new Error("auth_expired");
+    }
+    return res;
+  }
+
+  async function findExistingDriveFile(){
+    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+    const res = await driveApiFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)`
+    );
+    if(!res.ok) throw new Error("drive_list_failed");
+    const data = await res.json();
+    if(data.files && data.files.length > 0){
+      return data.files[0].id;
+    }
+    return null;
+  }
+
+  async function downloadDriveFile(fileId){
+    const res = await driveApiFetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`
+    );
+    if(!res.ok) throw new Error("drive_download_failed");
+    return res.json();
+  }
+
+  async function uploadDriveFile(fileId, dataObj){
+    const boundary = "task_ledger_boundary_" + Date.now();
+    // Metadata part is only meaningful when CREATING a file (sets its name).
+    // On an update (fileId already exists) we skip the metadata part
+    // entirely rather than sending a placeholder "{}" block, since Drive's
+    // multipart PATCH doesn't need — and shouldn't be sent — an empty part.
+    const metadataPart = fileId
+      ? ""
+      : `--${boundary}\r\n` +
+        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+        `${JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json" })}\r\n`;
+
+    const body =
+      metadataPart +
+      `--${boundary}\r\n` +
+      `Content-Type: application/json\r\n\r\n` +
+      `${JSON.stringify(dataObj)}\r\n` +
+      `--${boundary}--`;
+
+    const url = fileId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+
+    const res = await driveApiFetch(url, {
+      method: fileId ? "PATCH" : "POST",
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+      body
+    });
+    if(!res.ok) throw new Error("drive_upload_failed");
+    const data = await res.json();
+    return data.id;
+  }
+
+  function mergeStates(local, remote){
+    // Newest-wins merge per day, and union of tasks by id (local wins on name conflicts).
+    const merged = {
+      tasks: local.tasks && local.tasks.length ? local.tasks : (remote.tasks || []),
+      days: {},
+      currentYear: local.currentYear || remote.currentYear || new Date().getFullYear()
+    };
+    const allDates = new Set([
+      ...Object.keys(local.days || {}),
+      ...Object.keys(remote.days || {})
+    ]);
+    allDates.forEach(date=>{
+      const l = local.days[date];
+      const r = remote.days ? remote.days[date] : null;
+      if(l && r){
+        // union of done ids for that day
+        const set = new Set([...(l.done||[]), ...(r.done||[])]);
+        merged.days[date] = { done: Array.from(set) };
+      } else {
+        merged.days[date] = l || r;
+      }
+    });
+    return merged;
+  }
+
+  async function syncWithDrive(opts){
+    opts = opts || {};
+    if(!isConnected() || driveBusy) return;
+    driveBusy = true;
+    setDriveStatus("syncing", "Syncing…");
+    try{
+      if(!driveFileId){
+        driveFileId = await findExistingDriveFile();
+        if(driveFileId) localStorage.setItem(DRIVE_FILEID_KEY, driveFileId);
+      }
+
+      if(driveFileId){
+        const remote = await downloadDriveFile(driveFileId);
+        if(opts.isInitialConnect){
+          // First connect: merge remote + local so nothing is lost either side
+          state = mergeStates(state, remote || {});
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          renderMasterList();
+          renderDetail();
+          renderGrid();
+        }
+        if(!opts.pullOnly){
+          driveFileId = await uploadDriveFile(driveFileId, state);
+          localStorage.setItem(DRIVE_FILEID_KEY, driveFileId);
+        }
+      } else {
+        // No file exists yet on Drive — create it from current state
+        driveFileId = await uploadDriveFile(null, state);
+        localStorage.setItem(DRIVE_FILEID_KEY, driveFileId);
+      }
+      setDriveStatus("connected", "Synced to Drive");
+    }catch(err){
+      console.error("Drive sync error:", err);
+      if(err.message === "auth_expired"){
+        accessToken = null;
+        tokenExpiresAt = 0;
+        sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+        setDriveStatus("error", "Session expired — reconnect Drive");
+        updateDriveUI();
+      } else {
+        setDriveStatus("error", "Sync failed — will retry");
+      }
+    }finally{
+      driveBusy = false;
+    }
+  }
+
+  function queueDriveSync(){
+    if(!isConnected()) return;
+    clearTimeout(driveSyncTimer);
+    driveSyncTimer = setTimeout(()=> syncWithDrive({}), 1500);
+  }
+
+  /* ---------------- Init ---------------- */
+
+  renderMasterList();
+  renderDetail();
+  renderGrid();
+  initGoogle();
+
+})();
+</script>
+</body>
+</html>
