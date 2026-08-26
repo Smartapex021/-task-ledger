@@ -1126,7 +1126,7 @@
 
   function restoreToken(){
     try{
-      const raw = sessionStorage.getItem(DRIVE_TOKEN_KEY);
+      const raw = localStorage.getItem(DRIVE_TOKEN_KEY);
       if(!raw) return;
       const parsed = JSON.parse(raw);
       if(parsed.expiresAt > Date.now()){
@@ -1138,7 +1138,7 @@
 
   function persistToken(){
     try{
-      sessionStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
+      localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
         accessToken, expiresAt: tokenExpiresAt
       }));
     }catch(e){ /* ignore */ }
@@ -1202,7 +1202,7 @@
         }
         accessToken = null;
         tokenExpiresAt = 0;
-        sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+        localStorage.removeItem(DRIVE_TOKEN_KEY);
         updateDriveUI();
       }
       return;
@@ -1287,21 +1287,44 @@
   }
 
   function mergeStates(local, remote){
-    // Newest-wins merge per day, and union of tasks by id (local wins on name conflicts).
+    // Tasks get a random id per-device (see uid()), so the same task name
+    // ("Workout") has a DIFFERENT id on your phone than on your laptop.
+    // Merging days by task-id directly (the previous approach) silently
+    // failed to line up completions across devices for exactly this reason.
+    // Fix: reconcile remote tasks onto local ids by matching NAME first;
+    // only truly new remote task names get kept as separate entries.
+    const localByName = new Map(local.tasks.map(t => [t.name.trim().toLowerCase(), t]));
+    const remoteToLocalId = new Map(); // remote task id -> local task id
+
+    const mergedTasks = local.tasks.slice();
+    (remote.tasks || []).forEach(rt=>{
+      const key = rt.name.trim().toLowerCase();
+      const match = localByName.get(key);
+      if(match){
+        remoteToLocalId.set(rt.id, match.id);
+      } else {
+        // genuinely new task that only exists on the remote device
+        mergedTasks.push(rt);
+        remoteToLocalId.set(rt.id, rt.id);
+      }
+    });
+
     const merged = {
-      tasks: local.tasks && local.tasks.length ? local.tasks : (remote.tasks || []),
+      tasks: mergedTasks,
       days: {},
       currentYear: local.currentYear || remote.currentYear || new Date().getFullYear()
     };
+
     const allDates = new Set([
       ...Object.keys(local.days || {}),
       ...Object.keys(remote.days || {})
     ]);
     allDates.forEach(date=>{
       const l = local.days[date];
-      const r = remote.days ? remote.days[date] : null;
+      const rRaw = remote.days ? remote.days[date] : null;
+      // remap remote's done-ids onto local ids before unioning
+      const r = rRaw ? { done: (rRaw.done || []).map(id => remoteToLocalId.get(id) || id) } : null;
       if(l && r){
-        // union of done ids for that day
         const set = new Set([...(l.done||[]), ...(r.done||[])]);
         merged.days[date] = { done: Array.from(set) };
       } else {
@@ -1347,7 +1370,7 @@
       if(err.message === "auth_expired"){
         accessToken = null;
         tokenExpiresAt = 0;
-        sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+        localStorage.removeItem(DRIVE_TOKEN_KEY);
         setDriveStatus("error", "Session expired — reconnect Drive");
         updateDriveUI();
       } else {
