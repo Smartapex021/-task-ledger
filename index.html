@@ -1174,7 +1174,7 @@
           tokenExpiresAt = Date.now() + (Number(resp.expires_in || 3599) * 1000);
           persistToken();
           updateDriveUI();
-          syncWithDrive({ isInitialConnect: true });
+          syncWithDrive({});
         } else {
           setDriveStatus("error", "Connection failed");
         }
@@ -1189,7 +1189,7 @@
     updateDriveUI();
     if(isConnected()){
       // We have a live token from earlier this session — pull latest on load
-      syncWithDrive({ isInitialConnect: false, pullOnly: true });
+      syncWithDrive({ pullOnly: true });
     }
   }
 
@@ -1347,9 +1347,15 @@
 
       if(driveFileId){
         const remote = await downloadDriveFile(driveFileId);
-        if(opts.isInitialConnect){
-          // First connect: merge remote + local so nothing is lost either side
-          state = mergeStates(state, remote || {});
+        // Merge on EVERY pull, not just the first connect. The previous
+        // version only merged when isInitialConnect was true, so on every
+        // later page load (token already saved -> pullOnly path) it
+        // downloaded the remote data and then did nothing with it —
+        // that's exactly why a laptop's checkmarks never reached the phone
+        // after the first-ever connection. Two devices can diverge on any
+        // visit, so every pull needs to reconcile, not just the first.
+        if(remote){
+          state = mergeStates(state, remote);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
           renderMasterList();
           renderDetail();
