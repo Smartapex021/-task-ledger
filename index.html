@@ -1334,9 +1334,21 @@
     return merged;
   }
 
+  let driveSyncPending = false; // true if a sync was requested while one was already running
+
   async function syncWithDrive(opts){
     opts = opts || {};
-    if(!isConnected() || driveBusy) return;
+    if(!isConnected()) return;
+    if(driveBusy){
+      // A sync is already in flight. Don't drop this request — the previous
+      // version did exactly that (silently discarded it), which is how
+      // rapid checkbox taps or near-simultaneous edits on two devices lost
+      // data: whichever change arrived while a sync was running never got
+      // uploaded on its own. Instead, remember that another sync is needed
+      // and run it right after the current one finishes.
+      driveSyncPending = true;
+      return;
+    }
     driveBusy = true;
     setDriveStatus("syncing", "Syncing…");
     try{
@@ -1384,6 +1396,10 @@
       }
     }finally{
       driveBusy = false;
+      if(driveSyncPending){
+        driveSyncPending = false;
+        syncWithDrive({}); // run the queued-up sync now that the coast is clear
+      }
     }
   }
 
