@@ -1098,12 +1098,12 @@
      Google Drive integration
      Uses Google Identity Services (token client) for OAuth, and the
      Drive REST API directly (no gapi client library needed) with the
-     narrow "drive.file" scope — this app can only see/write files
-     it creates itself, never your whole Drive.
+     "drive.appdata" scope — this app can only see/write inside a
+     hidden, app-specific storage area, never your visible Drive files.
      ================================================================ */
 
   const GOOGLE_CLIENT_ID = "332351185880-anenmqr01ls0j40rfna7qiru4gaf1g0b.apps.googleusercontent.com";
-  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
   const DRIVE_FILE_NAME = "task-ledger-data.json";
   const DRIVE_TOKEN_KEY = "taskLedgerDriveToken_v1";
   const DRIVE_FILEID_KEY = "taskLedgerDriveFileId_v1";
@@ -1233,9 +1233,14 @@
   }
 
   async function findExistingDriveFile(){
+    // FIX: this previously searched spaces=drive (your regular, visible
+    // Drive) while the app's OAuth scope only grants access to the hidden
+    // appDataFolder — a mismatch that meant this search could never find
+    // (or reliably create) the tracker's data file. That's the root cause
+    // of syncs appearing to succeed while nothing was actually recoverable.
     const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
     const res = await driveApiFetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)`
+      `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)`
     );
     if(!res.ok) throw new Error("drive_list_failed");
     const data = await res.json();
@@ -1255,15 +1260,19 @@
 
   async function uploadDriveFile(fileId, dataObj){
     const boundary = "task_ledger_boundary_" + Date.now();
-    // Metadata part is only meaningful when CREATING a file (sets its name).
-    // On an update (fileId already exists) we skip the metadata part
-    // entirely rather than sending a placeholder "{}" block, since Drive's
-    // multipart PATCH doesn't need — and shouldn't be sent — an empty part.
+    // Metadata part is only meaningful when CREATING a file (sets its name
+    // AND — critically — its parent folder). FIX: this previously omitted
+    // "parents", so a brand-new file was never actually placed inside
+    // appDataFolder even though the app's OAuth scope only grants access
+    // to that hidden folder. That mismatch is the root cause of data
+    // silently failing to persist. On an update (fileId already exists) we
+    // skip the metadata part entirely — Drive's multipart PATCH doesn't
+    // need, and shouldn't be sent, an empty metadata block.
     const metadataPart = fileId
       ? ""
       : `--${boundary}\r\n` +
         `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-        `${JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json" })}\r\n`;
+        `${JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json", parents: ["appDataFolder"] })}\r\n`;
 
     const body =
       metadataPart +
