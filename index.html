@@ -1261,21 +1261,36 @@
     return json;
   }
 
+  async function deleteDriveFile(fileId){
+    // Best-effort delete; if it's already gone (e.g. race with another
+    // device), that's fine — we're about to create a fresh one anyway.
+    try{
+      await driveApiFetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}`,
+        { method: "DELETE" }
+      );
+    }catch(e){ /* ignore — proceed to create regardless */ }
+  }
+
   async function uploadDriveFile(fileId, dataObj){
+    // REWRITE: previously this used PATCH to update an existing file in
+    // place. Every layer of that PATCH path checked out individually
+    // (valid token, valid scope, well-formed multipart body, confirmed
+    // 200-looking response) yet the write never actually landed on Drive's
+    // side, repeatedly, verified independently from both the phone and the
+    // laptop's console. Rather than keep chasing an invisible PATCH-specific
+    // failure, this now avoids PATCH entirely: delete the old file (if any)
+    // and always POST a brand new one. POST/create is the one path we have
+    // direct, repeated proof works correctly.
+    if(fileId){
+      await deleteDriveFile(fileId);
+    }
+
     const boundary = "task_ledger_boundary_" + Date.now();
-    // Metadata part is only meaningful when CREATING a file (sets its name
-    // AND — critically — its parent folder). FIX: this previously omitted
-    // "parents", so a brand-new file was never actually placed inside
-    // appDataFolder even though the app's OAuth scope only grants access
-    // to that hidden folder. That mismatch is the root cause of data
-    // silently failing to persist. On an update (fileId already exists) we
-    // skip the metadata part entirely — Drive's multipart PATCH doesn't
-    // need, and shouldn't be sent, an empty metadata block.
-    const metadataPart = fileId
-      ? ""
-      : `--${boundary}\r\n` +
-        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-        `${JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json", parents: ["appDataFolder"] })}\r\n`;
+    const metadataPart =
+      `--${boundary}\r\n` +
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+      `${JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json", parents: ["appDataFolder"] })}\r\n`;
 
     const body =
       metadataPart +
@@ -1284,17 +1299,17 @@
       `${JSON.stringify(dataObj)}\r\n` +
       `--${boundary}--`;
 
-    const url = fileId
-      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
-
-    const res = await driveApiFetch(url, {
-      method: fileId ? "PATCH" : "POST",
-      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
-      body
-    });
+    const res = await driveApiFetch(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+      {
+        method: "POST",
+        headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+        body
+      }
+    );
     if(!res.ok) throw new Error("drive_upload_failed");
     const data = await res.json();
+    console.log("[DEBUG] uploadDriveFile (delete+recreate) created new file id:", data.id);
     return data.id;
   }
 
