@@ -1256,7 +1256,9 @@
     );
     if(res.status === 404) throw new Error("drive_file_not_found");
     if(!res.ok) throw new Error("drive_download_failed");
-    return res.json();
+    const json = await res.json();
+    console.log("[DEBUG] downloadDriveFile raw response:", JSON.stringify(json));
+    return json;
   }
 
   async function uploadDriveFile(fileId, dataObj){
@@ -1369,8 +1371,10 @@
 
       if(driveFileId){
         let remote;
+        console.log("[DEBUG] Starting download. driveFileId:", driveFileId);
         try{
           remote = await downloadDriveFile(driveFileId);
+          console.log("[DEBUG] Download succeeded. Remote task count:", remote && remote.tasks ? remote.tasks.length : "no tasks field", "Remote data:", JSON.stringify(remote));
         }catch(downloadErr){
           if(downloadErr.message === "drive_file_not_found"){
             // The cached file id (from an earlier session / earlier bug fix)
@@ -1398,11 +1402,15 @@
         // after the first-ever connection. Two devices can diverge on any
         // visit, so every pull needs to reconcile, not just the first.
         if(remote){
+          console.log("[DEBUG] Merging. Local task count before merge:", state.tasks.length);
           state = mergeStates(state, remote);
+          console.log("[DEBUG] Merge complete. Local task count after merge:", state.tasks.length, "Merged task names:", state.tasks.map(t=>t.name).join(", "));
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
           renderMasterList();
           renderDetail();
           renderGrid();
+        } else {
+          console.log("[DEBUG] remote was falsy after download attempt — nothing to merge. Value:", remote);
         }
         if(!opts.pullOnly){
           console.log("[DEBUG] About to call uploadDriveFile. fileId:", driveFileId, "task count:", state.tasks.length);
