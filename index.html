@@ -1005,6 +1005,16 @@
       del.addEventListener("click", ()=>{
         if(confirm(`Remove "${task.name}" from your task list? Past completions of it will no longer count.`)){
           state.tasks = state.tasks.filter(t => t.id !== task.id);
+          // Tombstone: record the deletion by name so a merge with a
+          // stale device (one that hasn't seen this deletion yet, still
+          // has the old task in its own list) doesn't silently resurrect
+          // it. Without this, deleting a task on one device would keep
+          // reappearing every time it synced with a device that hadn't
+          // caught up — deletions have no natural signal in a plain union
+          // merge, so they need an explicit marker like this.
+          if(!state.deletedTaskNames) state.deletedTaskNames = [];
+          const key = task.name.trim().toLowerCase();
+          if(!state.deletedTaskNames.includes(key)) state.deletedTaskNames.push(key);
           saveState();
           renderMasterList();
           renderDetail();
@@ -1320,12 +1330,28 @@
     // failed to line up completions across devices for exactly this reason.
     // Fix: reconcile remote tasks onto local ids by matching NAME first;
     // only truly new remote task names get kept as separate entries.
+    //
+    // Tombstones: a plain union merge has no way to represent "this task
+    // was deliberately deleted" — any name still present on either side
+    // just gets kept, so a deletion on one device gets silently undone the
+    // next time it syncs with a device that hadn't caught up yet. To fix
+    // that, deletedTaskNames from both sides are combined, and anything
+    // in that combined list is excluded from the merged task list even if
+    // one side still has it.
+    const deletedNames = new Set([
+      ...(local.deletedTaskNames || []),
+      ...(remote.deletedTaskNames || [])
+    ]);
+
     const localByName = new Map(local.tasks.map(t => [t.name.trim().toLowerCase(), t]));
     const remoteToLocalId = new Map(); // remote task id -> local task id
 
-    const mergedTasks = local.tasks.slice();
+    const mergedTasks = local.tasks
+      .filter(t => !deletedNames.has(t.name.trim().toLowerCase()))
+      .slice();
     (remote.tasks || []).forEach(rt=>{
       const key = rt.name.trim().toLowerCase();
+      if(deletedNames.has(key)) return; // respect the tombstone, don't resurrect
       const match = localByName.get(key);
       if(match){
         remoteToLocalId.set(rt.id, match.id);
@@ -1339,6 +1365,7 @@
     const merged = {
       tasks: mergedTasks,
       days: {},
+      deletedTaskNames: Array.from(deletedNames),
       currentYear: local.currentYear || remote.currentYear || new Date().getFullYear()
     };
 
