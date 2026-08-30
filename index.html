@@ -961,7 +961,8 @@
   }
 
   function toggleTaskForDay(dateStr, taskId){
-    if(!state.days[dateStr]) state.days[dateStr] = { done: [] };
+    if(!state.days[dateStr]) state.days[dateStr] = { done: [], toggledAt: {} };
+    if(!state.days[dateStr].toggledAt) state.days[dateStr].toggledAt = {};
     const rec = state.days[dateStr];
     const idx = rec.done.indexOf(taskId);
     if(idx === -1){
@@ -969,7 +970,16 @@
     } else {
       rec.done.splice(idx, 1);
     }
-    if(rec.done.length === 0) delete state.days[dateStr];
+    // Record WHEN this specific task was last toggled on this day. A plain
+    // union merge (the previous approach) has no way to represent
+    // "unchecked" — any id that ever appeared in either device's done list
+    // got kept forever, so unchecking a box on one device would silently
+    // get re-checked the next time it merged with a device that hadn't
+    // caught up. Tracking the most recent toggle time per task-per-day lets
+    // the merge pick whichever change actually happened later, instead of
+    // just unioning everything that was ever checked.
+    rec.toggledAt[taskId] = Date.now();
+    if(rec.done.length === 0 && Object.keys(rec.toggledAt).length === 0) delete state.days[dateStr];
     saveState();
   }
 
@@ -1377,13 +1387,54 @@
       const l = local.days[date];
       const rRaw = remote.days ? remote.days[date] : null;
       // remap remote's done-ids onto local ids before unioning
-      const r = rRaw ? { done: (rRaw.done || []).map(id => remoteToLocalId.get(id) || id) } : null;
-      if(l && r){
-        const set = new Set([...(l.done||[]), ...(r.done||[])]);
-        merged.days[date] = { done: Array.from(set) };
-      } else {
-        merged.days[date] = l || r;
-      }
+      const r = rRaw ? {
+        done: (rRaw.done || []).map(id => remoteToLocalId.get(id) || id),
+        toggledAt: Object.fromEntries(
+          Object.entries(rRaw.toggledAt || {}).map(([id, ts]) => [remoteToLocalId.get(id) || id, ts])
+        )
+      } : null;
+
+      if(!l && !r){ return; }
+      if(l && !r){ merged.days[date] = l; return; }
+      if(!l && r){ merged.days[date] = r; return; }
+
+      // Both sides have activity for this day — resolve PER TASK by
+      // whichever side toggled it more recently, rather than a blind union
+      // that can never represent "this got unchecked." A task with a
+      // timestamp on only one side is unambiguous (that side is the only
+      // one that ever touched it); a task touched on both sides is decided
+      // by comparing the two timestamps directly.
+      const allTaskIds = new Set([
+        ...(l.done || []), ...(Object.keys(l.toggledAt || {})),
+        ...(r.done || []), ...(Object.keys(r.toggledAt || {}))
+      ]);
+      const doneSet = new Set();
+      const toggledAt = {};
+      allTaskIds.forEach(taskId=>{
+        const lTs = l.toggledAt ? l.toggledAt[taskId] : undefined;
+        const rTs = r.toggledAt ? r.toggledAt[taskId] : undefined;
+        const lChecked = (l.done || []).includes(taskId);
+        const rChecked = (r.done || []).includes(taskId);
+
+        let finalChecked;
+        if(lTs !== undefined && rTs !== undefined){
+          finalChecked = rTs > lTs ? rChecked : lChecked; // newer write wins
+          toggledAt[taskId] = Math.max(lTs, rTs);
+        } else if(lTs !== undefined){
+          finalChecked = lChecked;
+          toggledAt[taskId] = lTs;
+        } else if(rTs !== undefined){
+          finalChecked = rChecked;
+          toggledAt[taskId] = rTs;
+        } else {
+          // Neither side has a timestamp for this id (old data from before
+          // this fix shipped) — fall back to the old union behavior so
+          // pre-existing history isn't lost, just not perfectly resolved.
+          finalChecked = lChecked || rChecked;
+        }
+        if(finalChecked) doneSet.add(taskId);
+      });
+      merged.days[date] = { done: Array.from(doneSet), toggledAt };
     });
     return merged;
   }
