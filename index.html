@@ -1254,6 +1254,7 @@
     const res = await driveApiFetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`
     );
+    if(res.status === 404) throw new Error("drive_file_not_found");
     if(!res.ok) throw new Error("drive_download_failed");
     return res.json();
   }
@@ -1367,7 +1368,28 @@
       }
 
       if(driveFileId){
-        const remote = await downloadDriveFile(driveFileId);
+        let remote;
+        try{
+          remote = await downloadDriveFile(driveFileId);
+        }catch(downloadErr){
+          if(downloadErr.message === "drive_file_not_found"){
+            // The cached file id (from an earlier session / earlier bug fix)
+            // no longer points at a real file on Drive — this is exactly
+            // what happened on a device that had connected before the
+            // appDataFolder fix and was still holding an old, orphaned id.
+            // Recover by clearing it and searching fresh instead of just
+            // failing forever every time this device syncs.
+            driveFileId = null;
+            localStorage.removeItem(DRIVE_FILEID_KEY);
+            driveFileId = await findExistingDriveFile();
+            if(driveFileId){
+              localStorage.setItem(DRIVE_FILEID_KEY, driveFileId);
+              remote = await downloadDriveFile(driveFileId);
+            }
+          } else {
+            throw downloadErr;
+          }
+        }
         // Merge on EVERY pull, not just the first connect. The previous
         // version only merged when isInitialConnect was true, so on every
         // later page load (token already saved -> pullOnly path) it
