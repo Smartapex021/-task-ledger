@@ -1405,8 +1405,12 @@
           renderGrid();
         }
         if(!opts.pullOnly){
+          console.log("[DEBUG] About to call uploadDriveFile. fileId:", driveFileId, "task count:", state.tasks.length);
           driveFileId = await uploadDriveFile(driveFileId, state);
+          console.log("[DEBUG] uploadDriveFile finished. New/confirmed fileId:", driveFileId);
           localStorage.setItem(DRIVE_FILEID_KEY, driveFileId);
+        } else {
+          console.log("[DEBUG] Skipped upload because opts.pullOnly was true.");
         }
       } else {
         // No file exists yet on Drive — create it from current state
@@ -1435,9 +1439,16 @@
   }
 
   function queueDriveSync(){
-    if(!isConnected()) return;
+    if(!isConnected()){
+      console.log("[DEBUG] queueDriveSync called but isConnected() is false — sync will NOT run.");
+      return;
+    }
+    console.log("[DEBUG] queueDriveSync: timer (re)started, will sync in 1.5s if nothing else resets it.");
     clearTimeout(driveSyncTimer);
-    driveSyncTimer = setTimeout(()=> syncWithDrive({}), 1500);
+    driveSyncTimer = setTimeout(()=> {
+      console.log("[DEBUG] Debounce timer fired, calling syncWithDrive now.");
+      syncWithDrive({});
+    }, 1500);
   }
 
   /* ---------------- Init ---------------- */
