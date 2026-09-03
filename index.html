@@ -954,7 +954,37 @@ function toggleTaskForDay(dateStr, taskId){
   let rec = state.days[dateStr]; if (!rec) rec = state.days[dateStr] = { done: [], toggledAt: {} };
   if (!rec.toggledAt) rec.toggledAt = {};
   const idx = rec.done.indexOf(taskId); if (idx === -1) rec.done.push(taskId); else rec.done.splice(idx, 1);
-  rec.toggledAt[taskId] = Date.now(); save(); renderAll(false);
+  rec.toggledAt[taskId] = Date.now(); save();
+  // PERFORMANCE FIX: checking a single box used to call renderAll(), which
+  // rebuilds the ENTIRE year grid — up to 371 button elements re-created
+  // as HTML strings and re-inserted into the DOM — just to change one
+  // cell's color. That's the real cause of the lag on phones: correct on
+  // a laptop's CPU, expensive on a mid-range phone's, and it happened on
+  // every single tap. Toggling one task only ever changes that one day's
+  // cell, so now only that cell gets updated directly, plus the score
+  // card / checklist / stats that actually depend on the change — the
+  // other 370+ cells are left untouched instead of rebuilt from scratch.
+  updateSingleCell(dateStr);
+  renderStats();
+  renderDetail();
+  renderManager();
+}
+function updateSingleCell(dateStr){
+  const cellEl = document.querySelector('.cell[data-date="' + dateStr + '"]');
+  if (!cellEl) return; // e.g. the day isn't in the currently-viewed year
+  const recN = recurringTasks().length;
+  const oneOffsForDay = state.tasks.filter(t => t.date === dateStr).length;
+  const tot = Math.max(1, recN + oneOffsForDay);
+  const done = getDoneCount(dateStr);
+  const today = todayISO();
+  const isFuture = dateStr > today;
+  const band = isFuture ? "empty" : bandForCounts(done, tot);
+  cellEl.style.background = BAND_COLOR[band];
+  cellEl.classList.toggle("perfect", done === tot && tot > 0 && !isFuture);
+  cellEl.dataset.done = done;
+  cellEl.dataset.total = tot;
+  const d = new Date(dateStr + "T00:00:00");
+  cellEl.setAttribute("aria-label", MONTH_LABELS[d.getMonth()] + " " + d.getDate() + ": " + done + " of " + tot + " tasks");
 }
 function shiftDay(delta){
   const d = new Date(selectedDate + "T00:00:00"); d.setDate(d.getDate() + delta);
